@@ -11,15 +11,17 @@
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
-void serve_static(int fd, char *filename, int filesize);
+void serve_static(int fd, char *filename, int filesize, char *method);
 void get_filetype(char *filename, char *filetype);
-void serve_dynamic(int fd, char *filename, char *cgiargs);
+void serve_dynamic(int fd, char *filename, char *cgiargs, char *method);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
 
 // 타이니는 포트로부터 오는 연결 요청을 반복적으로 듣기 수행하는 서버임
 int main(int argc, char **argv)
 {
   int listenfd, connfd; //듣기소켓, 연결소켓 초기화
+
+  // getnameinfo 에서 hostname,port 값이 결정됨.
   char hostname[MAXLINE], port[MAXLINE];
   socklen_t clientlen;
   struct sockaddr_storage clientaddr;
@@ -36,17 +38,25 @@ int main(int argc, char **argv)
   // listen 식별자를 리턴해서 listenfd에 넣는다.
   // 함수 호출 듣기 소켓을 오픈함. 클라이언트의 정보가 담긴다.
   listenfd = Open_listenfd(argv[1]);
+  // Open_listenfd 안에 geraddinfo에서 ip를 얻음
+  // 다시 그 ip를 이용해 도메인을 얻는게 getnameinfo
+
   // ./tiny 5000 이렇게 주면
-  // argv[0]에 ./tiny 들어가고 argv[1]에 5000 들어감
+  // argv[0]에 ./tiny 들어가고 argv[1]에 5000 들어감 -> 구조체가 만들어진다!!
 
   while (1)
   {
+    
     clientlen = sizeof(clientaddr);
 
     // Accept 실행 > 연결 받음 > 트랜잭션 수행 > 연결 닫음. (계속해서 반복)
     // accept함수를 통해 연결 요청한 clientfd와 연결
     connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
+    
+    // Getnameinfo : ip 주소를 도메인주소로 바꿔줌
+  
     Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
+
     printf("Accepted connection from (%s, %s)\n", hostname, port);
 
     // client에서 받은 요청을 처리하는 doit 함수 진행
@@ -67,20 +77,22 @@ void doit(int fd) // tiny doit 은 한 개의 HTTP 트랜잭션을 처리한다.
   rio_t rio;
 
   /* Read request line and headers*/
-  Rio_readinitb(&rio, fd); //
+  Rio_readinitb(&rio, fd); 
   Rio_readlineb(&rio, buf, MAXLINE);
   printf("Request headers:\n");
   printf("%s", buf);
   sscanf(buf, "%s %s %s", method, uri, version);
 
-  if (strcasecmp(method, "GET"))
+  if (strcasecmp(method, "GET") && (strcasecmp(method, "HEAD")))
   {
+
     clienterror(fd, method, "501", "Not implemented", "Tiny does not implement this method");
 
     return;
   }
 
-  read_requesthdrs(&rio);
+  read_requesthdrs(&rio); 
+  
 
   is_static = parse_uri(uri, filename, cgiargs); // 요청이 동적인지 정적인지 플래그를 설정한다.
   // cgiargs 는 동적 컨텐츠의 실행 파일에 들어갈 인자
@@ -100,7 +112,7 @@ void doit(int fd) // tiny doit 은 한 개의 HTTP 트랜잭션을 처리한다.
       return;
     }
 
-    serve_static(fd, filename, sbuf.st_size); // 읽기 권한 통과시 정적컨텐츠 제공
+    serve_static(fd, filename, sbuf.st_size, method); // 읽기 권한 통과시 정적컨텐츠 제공
   }
 
   else /* Serve dynamic content */
@@ -111,7 +123,7 @@ void doit(int fd) // tiny doit 은 한 개의 HTTP 트랜잭션을 처리한다.
       return;
     }
 
-    serve_dynamic(fd, filename, cgiargs); // 읽기 권한 통과시 동적컨텐츠 제공
+    serve_dynamic(fd, filename, cgiargs, method); // 읽기 권한 통과시 동적컨텐츠 제공
   }
 }
 
@@ -166,7 +178,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
   }
 }
 
-void serve_static(int fd, char *filename, int filesize)
+void serve_static(int fd, char *filename, int filesize, char *method)
 {
   int srcfd;
   char *srcp, filetype[MAXLINE], buf[MAXBUF];
@@ -190,8 +202,8 @@ void serve_static(int fd, char *filename, int filesize)
   rio_readn(srcfd, srcp, filesize);
 
   Close(srcfd);
-
-  Rio_writen(fd, srcp, filesize); // 얘대신 딴거 써라malloc, rio_readn, and rio_writen,
+  if (!strcasecmp(method, "GET"))
+    Rio_writen(fd, srcp, filesize); // 얘대신 딴거 써라malloc, rio_readn, and rio_writen,
 
   // Munmap(srcp, filesize);  // 얘대신 딴거 써라 malloc, rio_readn, and rio_writen,
   // free는 포인터 주소값이 파라미터로 들어간다.
@@ -214,15 +226,17 @@ void get_filetype(char *filename, char *filetype)
     strcpy(filetype, "text/plain");
 }
 
-void serve_dynamic(int fd, char *filename, char *cgiargs)
+void serve_dynamic(int fd, char *filename, char *cgiargs, char *method)
 {
   char buf[MAXLINE], *emptylist[] = {NULL};
 
   sprintf(buf, "HTTP/1.0 200 OK\r\n");
   Rio_writen(fd, buf, strlen(buf));
   sprintf(buf, "Server: Tiny Web Server\r\n");
-  Rio_writen(fd, buf, strlen(buf));
 
+  if (!strcasecmp(method, "GET"))
+    Rio_writen(fd, buf, strlen(buf));
+    
   if (Fork() == 0)
   {
 
