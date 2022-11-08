@@ -11,6 +11,8 @@ static const char *proxy_port;
 
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
+make_request_to_server(int fd, char *url, char *host, char *port, char *method, char *version, char *filename);
+void parsing(char *host, char *uri, char *filename, char *port);
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr =
@@ -32,9 +34,6 @@ int main(int argc, char **argv)
 
   listenfd = Open_listenfd(argv[1]); // 듣기식별자 생성
 
-  proxy_host = "54.180.202.226";
-  proxy_port = argv[1];
-
   while (1)
   {
     clientlen = sizeof(clientaddr);              //클라이언트주소 크기
@@ -53,42 +52,21 @@ int main(int argc, char **argv)
 
 void doit(int fd)
 {
-  struct stat sbuf;                                                                                               // 소켓버프 (임시저장변수)
-  char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], url[MAXLINE], host[MAXLINE], port[MAXLINE], version[MAXLINE]; //예를 들어 uri는 파일이름과 인자, 버젼은 http 1.0 / 1.1
-  char filename[MAXLINE];                                                                                         // cgi인자는 ?뒤에 나오는 것으로 &로 구분
+  struct stat sbuf; // 소켓버프 (임시저장변수)
+  char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], url[MAXLINE], host[MAXLINE], port[MAXLINE], version[MAXLINE], filename[MAXLINE];
+  //예를 들어 uri는 파일이름과 인자, 버젼은 http 1.0 / 1.1
+  char rebuf[MAX_OBJECT_SIZE]; // cgi인자는 ?뒤에 나오는 것으로 &로 구분
   rio_t client_rio, pts_rio;
-  char *p;
 
   /* Read request line and headers */
   Rio_readinitb(&client_rio, fd);           // connectfd와 rio버퍼를 연결해주고 fd에 있는 값들을 전달해준다
   Rio_readlineb(&client_rio, buf, MAXLINE); // rio버퍼에 있는 것을 buf에다가 복사해준다.
   printf("Request headers:\n");
-  printf("%s\n", buf);                           // buf에는 method, uri, version이 띄어쓰기로 나열되어 있다!!!
+  printf("%s\n", buf); // buf에는 method, uri, version이 띄어쓰기로 나열되어 있다!!!
+
   sscanf(buf, "%s %s %s", method, uri, version); // method / uri / version 정의 완료
 
-  strcpy(url, uri);
-  if (p = strchr(uri, '/'))
-  {
-    *p = '\0';
-    sscanf(p + 2, "%s", host);
-  }
-
-  else
-    strcpy(host, uri);
-
-  if ((p = strchr(host, ':')))
-  {
-    *p = '\0';
-    sscanf(p + 1, "%s", port);
-    sscanf(uri, "%s", uri);
-  }
-
-  if ((p = strchr(port, '/')))
-  {
-    *p = '\0';
-    sscanf(port, "%s", port);
-    sscanf(p + 1, "%s", filename);
-  }
+  parsing(host, uri, filename, port);
 
   if (strcasecmp(method, "GET")) // 인자 1과 인자2가 같으면 0을 출력합니다!
   {
@@ -103,20 +81,32 @@ void doit(int fd)
   read_requesthdrs(&client_rio);
   make_request_to_server(ptsfd, url, host, port, method, version, filename);
 
-  Rio_readnb(&pts_rio, buf, MAX_OBJECT_SIZE);
-  printf("%s\n\p", buf);
+  Rio_readnb(&pts_rio, rebuf, MAX_OBJECT_SIZE);
+  printf("%s\n", rebuf);
 
+  Rio_writen(fd, rebuf, MAX_OBJECT_SIZE);
 
+  printf("Response headers:\n");
 
+  printf("%s", rebuf);
   Close(ptsfd);
 }
 
 int make_request_to_server(int fd, char *url, char *host, char *port, char *method, char *version, char *filename)
 {
   char buf[MAXLINE];
-  strcpy(url, "/\n");
-  if (filename == NULL)
+
+  if (strlen(filename) == 0)
+  {
+    strcpy(url, "/\n");
+  }
+  else
+  {
+    strcpy(url, "/");
     strcat(url, filename);
+  }
+
+  // printf("++++++++++++++++++ is %s ++++++++++++++++", url);
 
   sprintf(buf, "%s %s %s\r\n", method, url, version);
   sprintf(buf, "%sHost: %s:%s\r\n", buf, host, port);
@@ -140,4 +130,33 @@ void read_requesthdrs(rio_t *rp)
   }
 
   return;
+}
+
+void parsing(char *host, char *uri, char *filename, char *port)
+{
+
+  char *p;
+
+  if (p = strchr(uri, '/'))
+  {
+    *p = '\0';
+    sscanf(p + 2, "%s", host);
+  }
+
+  else
+    strcpy(host, uri);
+
+  if ((p = strchr(host, ':')))
+  {
+    *p = '\0';
+    sscanf(host, "%s", host);
+    sscanf(p + 1, "%s", port);
+  }
+
+  if ((p = strchr(port, '/')))
+  {
+    *p = '\0';
+    sscanf(port, "%s", port);
+    sscanf(p + 1, "%s", filename);
+  }
 }
