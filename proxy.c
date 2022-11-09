@@ -1,8 +1,13 @@
 #include <stdio.h>
 #include "csapp.h"
+#include "sbuf.h"
 /* Recommended max cache and object sizes */
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
+#define NTHREADS 4
+#define SBUFSIZE 16
+
+
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr =
     "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 "
@@ -14,6 +19,8 @@ void make_request_to_server(int ptsfd, char *url, char *host, char *port, char *
 void parsing(char *host, char *uri, char *filename, char *port);
 void *thread(void *vargp);
 
+// 전역이라 밖에다 선언함.
+sbuf_t sbuf; /* Shared buffer of connected descriptors*/
 
 int main(int argc, char **argv)
 {
@@ -29,6 +36,8 @@ int main(int argc, char **argv)
         exit(1);
     }
     listenfd = Open_listenfd(argv[1]);
+
+    
 
     while (1)
     {
@@ -56,7 +65,7 @@ void *thread(void *vargp)
 
 void doit(int fd)
 {
-    // struct stat sbuf; 
+    // struct stat sbuf;
     char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], url[MAXLINE], version[MAXLINE], port[MAXLINE], host[MAXLINE], filename[MAXLINE];
     char response[MAX_OBJECT_SIZE];
     rio_t client_rio, server_rio;
